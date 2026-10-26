@@ -359,7 +359,7 @@ function renderStats() {
       <div class="tile"><div class="k">Sank the 8 early</div><div class="val num"><span class="s">${st.early8.S}</span> / <span class="v">${st.early8.V}</span></div><div class="muted">games lost that way</div></div>
     </div>
 
-    <h2>${S}'s win % over time</h2>
+    <h2>Who's ahead over time</h2>
     <div class="card">${lineChart(st.cumul)}</div>
 
     <h2>Wins per month</h2>
@@ -367,19 +367,39 @@ function renderStats() {
 }
 
 /* ---------- Charts: hand-built SVG, no library needed ---------- */
+/* Tug-of-war chart.
+   With only two players, Victor's win % is always 100 − Sebastian's, so
+   two lines would just mirror each other. Instead, ONE line shows the
+   balance: up = Sebastian ahead, down = Victor ahead, middle = even.
+   The area between the line and "even" is filled in the leader's colour.
+   `vals` is Sebastian's running win % after each game (from computeStats). */
 function lineChart(vals) {
   if (vals.length < 2) return '<div class="empty">Needs at least 2 games.</div>';
-  const W = 340, H = 150, L = 40, R = 8, T = 8, B = 20;
+  const W = 340, H = 160, L = 8, R = 8, T = 18, B = 34;
   const x = i => L + (i / (vals.length - 1)) * (W - L - R);
   const y = v => T + (1 - v / 100) * (H - T - B);
-  const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-  const last = vals[vals.length - 1];
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Win percentage over ${vals.length} games, currently ${Math.round(last)}%">
-    ${[0, 50, 100].map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--rail)" ${v === 50 ? 'stroke-dasharray="4 4"' : ''}/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}%</text>`).join('')}
-    <polyline points="${pts}" fill="none" stroke="var(--s)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${x(vals.length - 1)}" cy="${y(last)}" r="4" fill="var(--s)"/>
+  const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+  const mid = y(50);
+  // Polygon = the line, closed back along the "even" line. Two clip paths
+  // then show the part above "even" in yellow and the part below in blue.
+  const area = `${x(0)},${mid} ${pts.join(' ')} ${x(vals.length - 1)},${mid}`;
+  const s = Math.round(vals[vals.length - 1]), v = 100 - s;
+  const S = esc(nm('S')), V = esc(nm('V'));
+  return `<div class="sub num" style="margin:0 0 6px;font-weight:700"><span style="color:var(--s)">${S} ${s}%</span><span style="color:var(--v)">${V} ${v}%</span></div>
+  <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Running win share over ${vals.length} games: ${S} ${s}%, ${V} ${v}%">
+    <defs>
+      <clipPath id="cpS"><rect x="0" y="0" width="${W}" height="${mid}"/></clipPath>
+      <clipPath id="cpV"><rect x="0" y="${mid}" width="${W}" height="${H - mid}"/></clipPath>
+    </defs>
+    <polygon points="${area}" fill="var(--s)" fill-opacity=".28" clip-path="url(#cpS)"/>
+    <polygon points="${area}" fill="var(--v)" fill-opacity=".35" clip-path="url(#cpV)"/>
+    <line x1="${L}" x2="${W - R}" y1="${mid}" y2="${mid}" stroke="var(--chalk-dim)" stroke-dasharray="4 4"/>
+    <polyline points="${pts.join(' ')}" fill="none" stroke="var(--chalk)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${x(vals.length - 1)}" cy="${y(s)}" r="4" fill="var(--chalk)"/>
+    <text x="${L}" y="${T - 6}" style="fill:var(--s)">▲ ${S} ahead</text>
+    <text x="${L}" y="${H - B + 14}" style="fill:var(--v)">▼ ${V} ahead</text>
     <text x="${L}" y="${H - 4}">Game 1</text><text x="${W - R}" y="${H - 4}" text-anchor="end">Game ${vals.length}</text>
-  </svg><div class="muted">Above the dashed line = ${esc(nm('S'))} leads overall. The line settles as games pile up — early swings are normal.</div>`;
+  </svg><div class="muted">Dashed line = even. The line settles as games pile up, so early swings are normal.</div>`;
 }
 
 function monthChart(months) {
