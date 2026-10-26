@@ -86,9 +86,6 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 .tile .k{font-size:12px;color:var(--chalk-dim);text-transform:uppercase;letter-spacing:.06em}
 .tile .val{font-size:24px;font-weight:800;margin-top:2px}
 .tile .val .s{color:var(--s)}.tile .val .v{color:var(--v)}
-.vs{display:grid;grid-template-columns:1fr auto auto;gap:6px 14px;align-items:center}
-.vs .h{font-size:12px;color:var(--chalk-dim);text-transform:uppercase;letter-spacing:.06em}
-.vs .cs{color:var(--s);font-weight:700;text-align:right}.vs .cv{color:var(--v);font-weight:700;text-align:right}
 svg text{fill:var(--chalk-dim);font:11px system-ui,sans-serif}
 
 /* ---------- Bottom sheet (native <dialog>) ---------- */
@@ -101,9 +98,6 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{padding:10px 14px;border-radius:99px;background:var(--felt-3);border:1px solid var(--rail);font-size:15px;min-height:44px}
 .chip[aria-pressed="true"]{background:var(--chalk);color:var(--felt);border-color:var(--chalk);font-weight:700}
-.chip.small{padding:10px 0;text-align:center}
-/* 0–7 balls: an 8-column grid so all eight fit on one row at phone width */
-.chips[data-key="left"]{display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
 .row{display:flex;gap:10px;margin-top:20px}
 .btn{flex:1;padding:14px;border-radius:12px;font-weight:700;background:var(--felt-3);border:1px solid var(--rail);min-height:48px}
 .btn.primary{background:var(--chalk);color:var(--felt);border-color:var(--chalk)}
@@ -186,13 +180,7 @@ nav button span{display:block;font-size:20px;line-height:1.2}
 <dialog id="sheet">
   <form method="dialog" class="sheet" id="sheetForm">
     <h3 id="sheetTitle"></h3>
-    <p class="muted">Everything below is optional — just hit Save if you're in a hurry.</p>
-
     <div class="field"><span class="lbl">How did it end?</span><div class="chips" data-key="end"></div></div>
-    <div class="field"><span class="lbl">Who broke?</span><div class="chips" data-key="brk"></div></div>
-    <div class="field" id="bnrField" hidden><span class="lbl">Break and run?</span><div class="chips" data-key="bnr"></div></div>
-    <div class="field"><span class="lbl" id="grpLbl"></span><div class="chips" data-key="grp"></div></div>
-    <div class="field"><span class="lbl" id="leftLbl"></span><div class="chips" data-key="left"></div></div>
 
     <div class="row">
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
@@ -212,12 +200,8 @@ nav button span{display:block;font-size:20px;line-height:1.2}
      id   unique string
      t    timestamp (ms since 1970) — used for ordering and sessions
      w    winner: 'S' or 'V'
-     end  'clean' | 'early8' | 'scratch8' | 'forfeit'
-          (early8/scratch8 always describe the LOSER's foul)
-     brk  who broke: 'S' | 'V' | null
-     bnr  break-and-run: true/false
-     grp  the WINNER's group: 'solids' | 'stripes' | null
-     left balls the loser still had on the table: 0–7 | null
+     end  'clean'  = winner potted the 8
+          'early8' = the LOSER sank the 8 too early
    Stats, streaks and sessions are never stored — they are recalculated
    from the games list every render. That way an undo or delete can
    never leave a stale stat behind.
@@ -256,10 +240,7 @@ const sorted = () => [...state.games].sort((a, b) => a.t - b.t);
 const fmtDay = t => new Date(t).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 const fmtTime = t => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
-function endLabel(g) {
-  const l = esc(nm(other(g.w)));
-  return { clean: 'Potted the 8', early8: `${l} sank the 8 early`, scratch8: `${l} scratched on the 8`, forfeit: 'Forfeit' }[g.end] || '';
-}
+const endLabel = g => (g.end === 'early8' ? `${esc(nm(other(g.w)))} sank the 8 early` : 'Potted the 8');
 
 /* =====================================================================
    SESSIONS — derived, not stored.
@@ -288,11 +269,7 @@ function computeStats() {
   const P = () => ({ S: 0, V: 0 });
   const st = {
     n: games.length, wins: P(),
-    early8: P(), scratch8: P(), forfeit: P(),          // keyed by the player who LOST that way
-    brk: { S: { n: 0, won: 0 }, V: { n: 0, won: 0 } },  // games each player broke, and won
-    bnr: P(),
-    grp: { S: { solids: { n: 0, won: 0 }, stripes: { n: 0, won: 0 } }, V: { solids: { n: 0, won: 0 }, stripes: { n: 0, won: 0 } } },
-    left: { S: [], V: [] },                               // balls left when that player lost
+    early8: P(),                                          // keyed by the player who sank the 8 early (and lost)
     longest: P(), cur: { p: null, n: 0 },
     cumul: [],                                            // Sebastian's running win % after each game
     months: {}                                            // 'YYYY-MM' -> {S,V}
@@ -302,17 +279,6 @@ function computeStats() {
     const w = g.w, l = other(w);
     st.wins[w]++;
     if (g.end === 'early8') st.early8[l]++;
-    if (g.end === 'scratch8') st.scratch8[l]++;
-    if (g.end === 'forfeit') st.forfeit[l]++;
-    if (g.brk) { st.brk[g.brk].n++; if (g.brk === w) st.brk[g.brk].won++; }
-    if (g.bnr) st.bnr[w]++;
-    if (g.grp) {
-      // The winner played g.grp, so the loser played the other group.
-      const lg = g.grp === 'solids' ? 'stripes' : 'solids';
-      st.grp[w][g.grp].n++; st.grp[w][g.grp].won++;
-      st.grp[l][lg].n++;
-    }
-    if (g.left !== null && g.left !== undefined) st.left[l].push(g.left);
     // Streaks: extend the run if the same player won again, else restart.
     run = run.p === w ? { p: w, n: run.n + 1 } : { p: w, n: 1 };
     st.longest[w] = Math.max(st.longest[w], run.n);
@@ -325,8 +291,6 @@ function computeStats() {
   const sess = getSessions(games);
   st.sessions = { n: sess.length, S: sess.filter(s => s.S > s.V).length, V: sess.filter(s => s.V > s.S).length };
   st.sessions.tied = sess.length - st.sessions.S - st.sessions.V;
-  // "Close games": the loser had 0–1 balls left.
-  st.close = games.filter(g => g.left !== null && g.left !== undefined && g.left <= 1).length;
   return st;
 }
 
@@ -340,12 +304,7 @@ function render() {
 }
 
 function gameRow(g, withDelete) {
-  const tags = [];
-  if (g.end && g.end !== 'clean') tags.push(`<span class="tag ${g.end === 'forfeit' ? '' : 'warn'}">${endLabel(g)}</span>`);
-  if (g.bnr) tags.push('<span class="tag">Break &amp; run</span>');
-  else if (g.brk) tags.push(`<span class="tag">${esc(nm(g.brk))} broke</span>`);
-  if (g.grp) tags.push(`<span class="tag">${g.grp === 'solids' ? 'Solids' : 'Stripes'}</span>`);
-  if (g.left !== null && g.left !== undefined) tags.push(`<span class="tag">${g.left} left</span>`);
+  const tags = g.end === 'early8' ? [`<span class="tag warn">${endLabel(g)}</span>`] : [];
   return `<div class="game">
     <span class="dot ${g.w}" aria-hidden="true"></span>
     <div class="main"><div><b>${esc(nm(g.w))}</b> won <span class="meta">· ${fmtTime(g.t)}</span></div><div>${tags.join('')}</div></div>
@@ -391,39 +350,20 @@ function renderStats() {
   const st = computeStats();
   if (!st.n) { $('#stats').innerHTML = '<div class="empty">Play a few games and the stats show up here.</div>'; return; }
   const S = esc(nm('S')), V = esc(nm('V'));
-  const avg = a => (a.length ? (a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : '–');
-  const brkTotal = st.brk.S.n + st.brk.V.n;
-  const brkWon = st.brk.S.won + st.brk.V.won;
-  const gp = (p, g) => (st.grp[p][g].n ? `${pct(st.grp[p][g].won, st.grp[p][g].n)}% <span class="muted">(${st.grp[p][g].n})</span>` : '–');
-  const bp = p => (st.brk[p].n ? `${pct(st.brk[p].won, st.brk[p].n)}% <span class="muted">(${st.brk[p].n})</span>` : '–');
 
   $('#stats').innerHTML = `
     <div class="grid2" style="margin-top:12px">
       <div class="tile"><div class="k">Win rate</div><div class="val num"><span class="s">${pct(st.wins.S, st.n)}%</span> / <span class="v">${pct(st.wins.V, st.n)}%</span></div></div>
       <div class="tile"><div class="k">Nights won</div><div class="val num"><span class="s">${st.sessions.S}</span> – <span class="v">${st.sessions.V}</span></div><div class="muted">${st.sessions.tied} tied</div></div>
       <div class="tile"><div class="k">Longest streak</div><div class="val num"><span class="s">${st.longest.S}</span> / <span class="v">${st.longest.V}</span></div></div>
-      <div class="tile"><div class="k">Breaker wins</div><div class="val num">${brkTotal ? pct(brkWon, brkTotal) + '%' : '–'}</div><div class="muted">of ${brkTotal} games with break logged</div></div>
+      <div class="tile"><div class="k">Sank the 8 early</div><div class="val num"><span class="s">${st.early8.S}</span> / <span class="v">${st.early8.V}</span></div><div class="muted">games lost that way</div></div>
     </div>
 
     <h2>${S}'s win % over time</h2>
     <div class="card">${lineChart(st.cumul)}</div>
 
     <h2>Wins per month</h2>
-    <div class="card">${monthChart(st.months)}</div>
-
-    <h2>Head to head</h2>
-    <div class="card vs num">
-      <span class="h"></span><span class="h" style="color:var(--s)">${S}</span><span class="h" style="color:var(--v)">${V}</span>
-      <span>Sank the 8 early</span><span class="cs">${st.early8.S}</span><span class="cv">${st.early8.V}</span>
-      <span>Scratched on the 8</span><span class="cs">${st.scratch8.S}</span><span class="cv">${st.scratch8.V}</span>
-      <span>Forfeits</span><span class="cs">${st.forfeit.S}</span><span class="cv">${st.forfeit.V}</span>
-      <span>Break &amp; runs</span><span class="cs">${st.bnr.S}</span><span class="cv">${st.bnr.V}</span>
-      <span>Win % when breaking</span><span class="cs">${bp('S')}</span><span class="cv">${bp('V')}</span>
-      <span>Win % on solids</span><span class="cs">${gp('S', 'solids')}</span><span class="cv">${gp('V', 'solids')}</span>
-      <span>Win % on stripes</span><span class="cs">${gp('S', 'stripes')}</span><span class="cv">${gp('V', 'stripes')}</span>
-      <span>Avg balls left when losing</span><span class="cs">${avg(st.left.S)}</span><span class="cv">${avg(st.left.V)}</span>
-    </div>
-    <p class="muted" style="margin-top:10px">Numbers in brackets are how many games the % is based on. Under ~10 games, treat percentages as noise. ${st.close} game${st.close === 1 ? '' : 's'} so far ended with the loser on 0–1 balls.</p>`;
+    <div class="card">${monthChart(st.months)}</div>`;
 }
 
 /* ---------- Charts: hand-built SVG, no library needed ---------- */
@@ -468,27 +408,17 @@ function chipGroup(key, options) {
   // options: [[value, label], ...]; tapping the selected chip again clears it
   const wrap = document.querySelector(`.chips[data-key="${key}"]`);
   wrap.innerHTML = options.map(([v, l]) =>
-    `<button type="button" class="chip ${key === 'left' ? 'small' : ''}" data-v="${v}" aria-pressed="${String(draft[key]) === String(v)}">${l}</button>`).join('');
+    `<button type="button" class="chip" data-v="${v}" aria-pressed="${draft[key] === v}">${l}</button>`).join('');
 }
 
 function paintSheet() {
-  const w = draft.w, l = other(w), W = esc(nm(w)), Lname = esc(nm(l));
-  $('#sheetTitle').innerHTML = `<span style="color:var(--${w.toLowerCase()})">${W}</span> won`;
-  chipGroup('end', [['clean', 'Potted the 8'], ['early8', `${Lname} sank the 8 early`], ['scratch8', `${Lname} scratched on the 8`], ['forfeit', 'Forfeit']]);
-  chipGroup('brk', [['S', esc(nm('S'))], ['V', esc(nm('V'))]]);
-  // Break-and-run only makes sense if the winner broke and finished cleanly.
-  const bnrPossible = draft.brk === w && draft.end === 'clean';
-  if (!bnrPossible) draft.bnr = false;
-  $('#bnrField').hidden = !bnrPossible;
-  chipGroup('bnr', [[true, 'Yes, ran the table'], [false, 'No']]);
-  $('#grpLbl').textContent = `${nm(w)}'s group`;
-  chipGroup('grp', [['solids', 'Solids'], ['stripes', 'Stripes']]);
-  $('#leftLbl').textContent = `${nm(l)}'s balls left on the table`;
-  chipGroup('left', [0, 1, 2, 3, 4, 5, 6, 7].map(n => [n, n]));
+  const w = draft.w;
+  $('#sheetTitle').innerHTML = `<span style="color:var(--${w.toLowerCase()})">${esc(nm(w))}</span> won`;
+  chipGroup('end', [['clean', 'Potted the 8'], ['early8', `${esc(nm(other(w)))} sank the 8 early`]]);
 }
 
 function openSheet(w) {
-  draft = { w, end: 'clean', brk: null, bnr: false, grp: null, left: null };
+  draft = { w, end: 'clean' };
   paintSheet();
   $('#sheet').showModal();
 }
@@ -498,12 +428,7 @@ function openSheet(w) {
 $('#sheetForm').addEventListener('click', e => {
   const chip = e.target.closest('.chip');
   if (!chip) return;
-  const key = chip.parentElement.dataset.key;
-  let v = chip.dataset.v;
-  if (key === 'left') v = Number(v);
-  if (key === 'bnr') v = v === 'true';
-  // Tap a selected chip again to unselect (except "end", which always has a value).
-  draft[key] = (String(draft[key]) === String(v) && key !== 'end' && key !== 'bnr') ? null : v;
+  draft[chip.parentElement.dataset.key] = chip.dataset.v;
   paintSheet();
 });
 
