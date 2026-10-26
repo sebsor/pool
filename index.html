@@ -41,6 +41,9 @@ body{
   -webkit-tap-highlight-color:transparent;
 }
 main{max-width:520px;margin:0 auto}
+.topbar{display:flex;justify-content:space-between;align-items:center;min-height:36px}
+.sharebtn{font-size:14px;font-weight:700;padding:8px 14px;border-radius:99px;background:var(--felt-3);border:1px solid var(--rail)}
+.sharebtn:active{transform:scale(.97)}
 h1{font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--chalk-dim);font-weight:600}
 h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--chalk-dim);font-weight:600;margin:22px 0 10px}
 .num{font-variant-numeric:tabular-nums}
@@ -130,7 +133,7 @@ nav button span{display:block;font-size:20px;line-height:1.2}
 <main>
   <!-- ===== LOG ===== -->
   <section id="v-log" class="view on" aria-label="Log a game">
-    <h1>Rack Ledger</h1>
+    <div class="topbar"><h1>Rack Ledger</h1><button class="sharebtn" id="shareBtn" hidden>↗ Share standings</button></div>
     <div id="board"></div>
     <div class="winbtns">
       <button class="winbtn s" data-win="S"><span class="pn" data-p="S"></span> won<small>tap to log</small></button>
@@ -307,6 +310,7 @@ function computeStats() {
 function render() {
   document.querySelectorAll('.pn').forEach(el => (el.textContent = nm(el.dataset.p)));
   renderBoard(); renderRecent(); renderHistory(); renderStats();
+  $('#shareBtn').hidden = !state.games.length;   // nothing to share yet
 }
 
 // editable=true renders the row as a <button> (History tab) so tapping it
@@ -492,6 +496,136 @@ function removeGame(id) {
 $('#history').addEventListener('click', e => {
   const b = e.target.closest('[data-edit]');
   if (b) openEdit(b.dataset.edit);
+});
+
+/* =====================================================================
+   SHARE STANDINGS AS AN IMAGE
+   1. Draw a 1080×1350 summary card on an off-screen <canvas>.
+   2. Turn it into a PNG file.
+   3. Hand it to the phone's share sheet (Messenger, WhatsApp, SMS…).
+      Fallbacks: copy image to clipboard → download the PNG.
+   Why everything before share() is SYNCHRONOUS: browsers only allow
+   navigator.share() shortly after a tap ("user activation"). Awaiting a
+   slow async step first can make Safari reject the share, so the PNG is
+   made with toDataURL() (sync) instead of toBlob() (async).
+   ===================================================================== */
+const C = { felt: '#0d2219', card: '#123026', rail: '#2a4a3e', chalk: '#eef3ef', dim: '#9fb5aa', s: '#f2c230', v: '#3d7ef2', warn: '#ffb3a8' };
+const FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+
+function rrect(ctx, x, y, w, h, r) {   // rounded rectangle path (works everywhere, unlike ctx.roundRect)
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+function drawShareCard() {
+  const st = computeStats(), games = sorted();
+  const W = 1080, H = 1350, P = 72;
+  const cv = Object.assign(document.createElement('canvas'), { width: W, height: H });
+  const ctx = cv.getContext('2d');
+  const font = (w, px) => (ctx.font = `${w} ${px}px ${FONT}`);
+  // maxW: canvas squeezes text narrower instead of letting long names overflow
+  const text = (t, x, y, col, align = 'left', maxW = W - 2 * P) => { ctx.fillStyle = col; ctx.textAlign = align; ctx.fillText(t, x, y, maxW); };
+  const S = nm('S'), V = nm('V');
+
+  // Background + subtle "table" border
+  ctx.fillStyle = C.felt; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = C.rail; ctx.lineWidth = 4; rrect(ctx, 24, 24, W - 48, H - 48, 40); ctx.stroke();
+
+  // Header
+  font(700, 30); ctx.letterSpacing = '6px';   // ignored by older browsers, harmless
+  text('RACK LEDGER · 8-BALL', P, 130, C.dim);
+  ctx.letterSpacing = '0px';
+  font(500, 30);
+  text(new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }), W - P, 130, C.dim, 'right');
+
+  // Big score
+  font(700, 52);
+  text(S, W * 0.27, 260, C.chalk, 'center'); text(V, W * 0.73, 260, C.chalk, 'center');
+  font(900, 230);
+  text(String(st.wins.S), W * 0.27, 480, C.s, 'center'); text(String(st.wins.V), W * 0.73, 480, C.v, 'center');
+  font(300, 120); text('–', W / 2, 450, C.dim, 'center');
+
+  // Win-share bar
+  const bx = P, bw = W - 2 * P, by = 540, sw = st.n ? bw * st.wins.S / st.n : bw / 2;
+  ctx.save(); rrect(ctx, bx, by, bw, 26, 13); ctx.clip();
+  ctx.fillStyle = C.v; ctx.fillRect(bx, by, bw, 26); ctx.fillStyle = C.s; ctx.fillRect(bx, by, sw, 26);
+  ctx.restore();
+  font(700, 34);
+  text(`${pct(st.wins.S, st.n)}%`, bx, by + 76, C.s); text(`${pct(st.wins.V, st.n)}%`, bx + bw, by + 76, C.v, 'right');
+  font(500, 30); text(`${st.n} game${st.n === 1 ? '' : 's'} played`, W / 2, by + 76, C.dim, 'center');
+
+  // Last 10 form strip
+  const last = games.slice(-10);
+  font(700, 28); ctx.letterSpacing = '4px'; text('LAST 10', P, 760, C.dim); ctx.letterSpacing = '0px';
+  const r = 30, gap = (bw - 20 * r) / 9;
+  last.forEach((g, i) => {
+    const cx = P + r + i * (2 * r + gap), cy = 830;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = g.w === 'S' ? C.s : C.v; ctx.fill();
+    if (i === last.length - 1) { ctx.beginPath(); ctx.arc(cx, cy, r + 9, 0, Math.PI * 2); ctx.strokeStyle = C.chalk; ctx.lineWidth = 4; ctx.stroke(); }
+  });
+
+  // Three stat tiles
+  const tiles = [
+    ['STREAK NOW', st.cur.p ? `${st.cur.n}` : '–', st.cur.p ? nm(st.cur.p) : '', st.cur.p === 'S' ? C.s : C.v],
+    ['LONGEST STREAK', `${st.longest.S} / ${st.longest.V}`, `${S} / ${V}`, null],
+    ['SANK 8 EARLY', `${st.early8.S} / ${st.early8.V}`, `${S} / ${V}`, null],
+  ];
+  const tw = (bw - 2 * 24) / 3, ty = 930, th = 220;
+  tiles.forEach(([k, val, sub, col], i) => {
+    const tx = P + i * (tw + 24);
+    ctx.fillStyle = C.card; rrect(ctx, tx, ty, tw, th, 28); ctx.fill();
+    ctx.strokeStyle = C.rail; ctx.lineWidth = 2; ctx.stroke();
+    font(700, 24); ctx.letterSpacing = '2px'; text(k, tx + 30, ty + 56, C.dim); ctx.letterSpacing = '0px';
+    font(900, 76);
+    if (col) text(val, tx + 30, ty + 146, col);
+    else {   // "a / b" with a in yellow and b in blue
+      const [a, b] = val.split(' / ');
+      text(a, tx + 30, ty + 146, C.s);
+      const aw = ctx.measureText(a).width;
+      font(400, 60); text('/', tx + 30 + aw + 14, ty + 142, C.dim);
+      const sl = ctx.measureText('/').width;
+      font(900, 76); text(b, tx + 30 + aw + 28 + sl, ty + 146, C.v);
+    }
+    font(500, 26); text(sub, tx + 30, ty + 190, C.dim);
+  });
+
+  // Footer: most recent night
+  const sess = getSessions(), ls = sess[sess.length - 1];
+  if (ls) {
+    font(500, 34);
+    const lead = ls.S === ls.V ? 'Tied' : `${ls.S > ls.V ? S : V} took it`;
+    text(`Latest night (${fmtDay(ls.start)}): ${ls.S}–${ls.V} · ${lead}`, W / 2, 1250, C.chalk, 'center');
+  }
+  return cv;
+}
+
+// data: URL → File, synchronously (see the note above about user activation)
+function canvasToFile(cv, name) {
+  const bin = atob(cv.toDataURL('image/png').split(',')[1]);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], name, { type: 'image/png' });
+}
+
+$('#shareBtn').addEventListener('click', async () => {
+  const file = canvasToFile(drawShareCard(), `rack-ledger-${new Date().toISOString().slice(0, 10)}.png`);
+  const st = computeStats();
+  const caption = `${nm('S')} ${st.wins.S} – ${st.wins.V} ${nm('V')}`;
+  // 1) Native share sheet (phones, and some desktops)
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], text: caption }); return; }
+    catch (e) { if (e.name === 'AbortError') return; /* user closed the sheet — not an error */ }
+  }
+  // 2) Copy the image to the clipboard (desktop browsers)
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': file })]);
+    toast('Image copied — paste it to ' + nm('V')); return;
+  } catch (e) { /* not supported → fall through */ }
+  // 3) Last resort: download the PNG
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(file), download: file.name });
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('Image downloaded');
 });
 
 /* ---------- Toast with optional Undo ---------- */
