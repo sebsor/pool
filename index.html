@@ -77,7 +77,15 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 .game .meta{font-size:13px;color:var(--chalk-dim)}
 .tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;background:var(--felt-3);margin:3px 4px 0 0}
 .tag.warn{background:rgba(229,96,79,.18);color:#ffb3a8}
-.del{color:var(--chalk-dim);padding:8px;font-size:18px}
+/* History rows are buttons: tap to edit */
+button.game{width:100%;text-align:left}
+button.game:active{background:var(--felt-3)}
+.chev{color:var(--chalk-dim);font-size:22px;padding:0 4px}
+/* Form strip: last 10 games, oldest left → newest right */
+.form{display:flex;align-items:center;gap:6px;margin-top:12px}
+.form .lbl{font-size:13px;color:var(--chalk-dim);margin-right:4px}
+.form .dot{width:14px;height:14px}
+.form .dot.new{box-shadow:0 0 0 2px var(--felt-2),0 0 0 3.5px var(--chalk)}
 .sess-head{display:flex;justify-content:space-between;align-items:baseline}
 
 /* ---------- Stat tiles ---------- */
@@ -180,12 +188,15 @@ nav button span{display:block;font-size:20px;line-height:1.2}
 <dialog id="sheet">
   <form method="dialog" class="sheet" id="sheetForm">
     <h3 id="sheetTitle"></h3>
+    <p class="muted" id="sheetWhen" hidden></p>
+    <div class="field" id="winField" hidden><span class="lbl">Winner</span><div class="chips" data-key="w"></div></div>
     <div class="field"><span class="lbl">How did it end?</span><div class="chips" data-key="end"></div></div>
 
     <div class="row">
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
       <button class="btn primary" value="save" id="saveBtn">Save game</button>
     </div>
+    <button class="btn danger" value="delete" id="deleteBtn" style="width:100%;margin-top:10px" hidden>Delete game</button>
   </form>
 </dialog>
 
@@ -271,7 +282,6 @@ function computeStats() {
     n: games.length, wins: P(),
     early8: P(),                                          // keyed by the player who sank the 8 early (and lost)
     longest: P(), cur: { p: null, n: 0 },
-    cumul: [],                                            // Sebastian's running win % after each game
     months: {}                                            // 'YYYY-MM' -> {S,V}
   };
   let run = { p: null, n: 0 };
@@ -282,15 +292,11 @@ function computeStats() {
     // Streaks: extend the run if the same player won again, else restart.
     run = run.p === w ? { p: w, n: run.n + 1 } : { p: w, n: 1 };
     st.longest[w] = Math.max(st.longest[w], run.n);
-    st.cumul.push((st.wins.S / (i + 1)) * 100);
     const d = new Date(g.t);
     const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     (st.months[mk] ||= P())[w]++;
   });
   st.cur = run;
-  const sess = getSessions(games);
-  st.sessions = { n: sess.length, S: sess.filter(s => s.S > s.V).length, V: sess.filter(s => s.V > s.S).length };
-  st.sessions.tied = sess.length - st.sessions.S - st.sessions.V;
   return st;
 }
 
@@ -303,13 +309,27 @@ function render() {
   renderBoard(); renderRecent(); renderHistory(); renderStats();
 }
 
-function gameRow(g, withDelete) {
+// editable=true renders the row as a <button> (History tab) so tapping it
+// opens the edit sheet. A real button gets keyboard focus and screen-reader
+// semantics for free, which a clickable <div> would not.
+function gameRow(g, editable) {
   const tags = g.end === 'early8' ? [`<span class="tag warn">${endLabel(g)}</span>`] : [];
-  return `<div class="game">
-    <span class="dot ${g.w}" aria-hidden="true"></span>
-    <div class="main"><div><b>${esc(nm(g.w))}</b> won <span class="meta">· ${fmtTime(g.t)}</span></div><div>${tags.join('')}</div></div>
-    ${withDelete ? `<button class="del" data-del="${g.id}" aria-label="Delete game">✕</button>` : ''}
-  </div>`;
+  const inner = `<span class="dot ${g.w}" aria-hidden="true"></span>
+    <div class="main"><div><b>${esc(nm(g.w))}</b> won <span class="meta">· ${fmtTime(g.t)}</span></div><div>${tags.join('')}</div></div>`;
+  return editable
+    ? `<button type="button" class="game" data-edit="${g.id}" aria-label="Edit game: ${esc(nm(g.w))} won at ${fmtTime(g.t)}">${inner}<span class="chev" aria-hidden="true">›</span></button>`
+    : `<div class="game">${inner}</div>`;
+}
+
+// Last 10 games as coloured dots. Newest is on the right with a ring.
+function formStrip() {
+  const last = sorted().slice(-10);
+  if (!last.length) return '';
+  const s = last.filter(g => g.w === 'S').length, v = last.length - s;
+  const dots = last.map((g, i) => `<span class="dot ${g.w}${i === last.length - 1 ? ' new' : ''}"></span>`).join('');
+  return `<div class="form" role="img" aria-label="Last ${last.length} games: ${esc(nm('S'))} ${s}, ${esc(nm('V'))} ${v}">
+    <span class="lbl">Last ${last.length}</span>${dots}
+    <span class="muted num" style="margin-left:auto"><b style="color:var(--s)">${s}</b>–<b style="color:var(--v)">${v}</b></span></div>`;
 }
 
 function renderBoard() {
@@ -327,6 +347,7 @@ function renderBoard() {
     </div>
     <div class="bar" aria-hidden="true"><i class="bs" style="width:${st.n ? pct(st.wins.S, st.n) : 50}%"></i><i class="bv" style="flex:1"></i></div>
     <div class="sub muted"><span>${live ? `Tonight <b class="num" style="color:var(--chalk)">${last.S}–${last.V}</b>` : `${st.n} games all-time`}</span><span>${streak}</span></div>
+    ${formStrip()}
   </div>`;
 }
 
@@ -349,59 +370,18 @@ function renderHistory() {
 function renderStats() {
   const st = computeStats();
   if (!st.n) { $('#stats').innerHTML = '<div class="empty">Play a few games and the stats show up here.</div>'; return; }
-  const S = esc(nm('S')), V = esc(nm('V'));
-
   $('#stats').innerHTML = `
     <div class="grid2" style="margin-top:12px">
       <div class="tile"><div class="k">Win rate</div><div class="val num"><span class="s">${pct(st.wins.S, st.n)}%</span> / <span class="v">${pct(st.wins.V, st.n)}%</span></div></div>
-      <div class="tile"><div class="k">Nights won</div><div class="val num"><span class="s">${st.sessions.S}</span> – <span class="v">${st.sessions.V}</span></div><div class="muted">${st.sessions.tied} tied</div></div>
       <div class="tile"><div class="k">Longest streak</div><div class="val num"><span class="s">${st.longest.S}</span> / <span class="v">${st.longest.V}</span></div></div>
-      <div class="tile"><div class="k">Sank the 8 early</div><div class="val num"><span class="s">${st.early8.S}</span> / <span class="v">${st.early8.V}</span></div><div class="muted">games lost that way</div></div>
+      <div class="tile" style="grid-column:1/-1"><div class="k">Sank the 8 early</div><div class="val num"><span class="s">${st.early8.S}</span> / <span class="v">${st.early8.V}</span></div><div class="muted">games lost that way</div></div>
     </div>
-
-    <h2>Who's ahead over time</h2>
-    <div class="card">${lineChart(st.cumul)}</div>
 
     <h2>Wins per month</h2>
     <div class="card">${monthChart(st.months)}</div>`;
 }
 
 /* ---------- Charts: hand-built SVG, no library needed ---------- */
-/* Tug-of-war chart.
-   With only two players, Victor's win % is always 100 − Sebastian's, so
-   two lines would just mirror each other. Instead, ONE line shows the
-   balance: up = Sebastian ahead, down = Victor ahead, middle = even.
-   The area between the line and "even" is filled in the leader's colour.
-   `vals` is Sebastian's running win % after each game (from computeStats). */
-function lineChart(vals) {
-  if (vals.length < 2) return '<div class="empty">Needs at least 2 games.</div>';
-  const W = 340, H = 160, L = 8, R = 8, T = 18, B = 34;
-  const x = i => L + (i / (vals.length - 1)) * (W - L - R);
-  const y = v => T + (1 - v / 100) * (H - T - B);
-  const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
-  const mid = y(50);
-  // Polygon = the line, closed back along the "even" line. Two clip paths
-  // then show the part above "even" in yellow and the part below in blue.
-  const area = `${x(0)},${mid} ${pts.join(' ')} ${x(vals.length - 1)},${mid}`;
-  const s = Math.round(vals[vals.length - 1]), v = 100 - s;
-  const S = esc(nm('S')), V = esc(nm('V'));
-  return `<div class="sub num" style="margin:0 0 6px;font-weight:700"><span style="color:var(--s)">${S} ${s}%</span><span style="color:var(--v)">${V} ${v}%</span></div>
-  <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Running win share over ${vals.length} games: ${S} ${s}%, ${V} ${v}%">
-    <defs>
-      <clipPath id="cpS"><rect x="0" y="0" width="${W}" height="${mid}"/></clipPath>
-      <clipPath id="cpV"><rect x="0" y="${mid}" width="${W}" height="${H - mid}"/></clipPath>
-    </defs>
-    <polygon points="${area}" fill="var(--s)" fill-opacity=".28" clip-path="url(#cpS)"/>
-    <polygon points="${area}" fill="var(--v)" fill-opacity=".35" clip-path="url(#cpV)"/>
-    <line x1="${L}" x2="${W - R}" y1="${mid}" y2="${mid}" stroke="var(--chalk-dim)" stroke-dasharray="4 4"/>
-    <polyline points="${pts.join(' ')}" fill="none" stroke="var(--chalk)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${x(vals.length - 1)}" cy="${y(s)}" r="4" fill="var(--chalk)"/>
-    <text x="${L}" y="${T - 6}" style="fill:var(--s)">▲ ${S} ahead</text>
-    <text x="${L}" y="${H - B + 14}" style="fill:var(--v)">▼ ${V} ahead</text>
-    <text x="${L}" y="${H - 4}">Game 1</text><text x="${W - R}" y="${H - 4}" text-anchor="end">Game ${vals.length}</text>
-  </svg><div class="muted">Dashed line = even. The line settles as games pile up, so early swings are normal.</div>`;
-}
-
 function monthChart(months) {
   const keys = Object.keys(months).sort().slice(-6);   // last 6 months with games
   const max = Math.max(1, ...keys.flatMap(k => [months[k].S, months[k].V]));
@@ -418,27 +398,51 @@ function monthChart(months) {
 }
 
 /* =====================================================================
-   LOGGING A GAME — the bottom sheet
-   Tapping a winner button opens the sheet pre-filled with defaults, so
-   "tap winner → Save" is the fastest path (2 taps). Every detail is optional.
+   THE BOTTOM SHEET — used for both logging and editing.
+   draft = the game being worked on.
+     New game:  draft has no id. Opened by a winner button, so the winner
+                is already known → "tap winner → Save" is 2 taps.
+     Edit:      draft.id is set. Opened by tapping a row in History; the
+                sheet then also shows Winner chips and a Delete button.
    ===================================================================== */
 let draft = null;
 
 function chipGroup(key, options) {
-  // options: [[value, label], ...]; tapping the selected chip again clears it
+  // options: [[value, label], ...]
   const wrap = document.querySelector(`.chips[data-key="${key}"]`);
   wrap.innerHTML = options.map(([v, l]) =>
     `<button type="button" class="chip" data-v="${v}" aria-pressed="${draft[key] === v}">${l}</button>`).join('');
 }
 
 function paintSheet() {
-  const w = draft.w;
-  $('#sheetTitle').innerHTML = `<span style="color:var(--${w.toLowerCase()})">${esc(nm(w))}</span> won`;
+  const w = draft.w, editing = !!draft.id;
+  $('#sheetTitle').innerHTML = editing
+    ? 'Edit game'
+    : `<span style="color:var(--${w.toLowerCase()})">${esc(nm(w))}</span> won`;
+  $('#sheetWhen').hidden = !editing;
+  if (editing) $('#sheetWhen').textContent = `${fmtDay(draft.t)} · ${fmtTime(draft.t)}`;
+  $('#winField').hidden = !editing;
+  if (editing) chipGroup('w', [['S', esc(nm('S'))], ['V', esc(nm('V'))]]);
+  // The "early" label names the loser, so it updates when the winner changes.
   chipGroup('end', [['clean', 'Potted the 8'], ['early8', `${esc(nm(other(w)))} sank the 8 early`]]);
+  $('#saveBtn').textContent = editing ? 'Save changes' : 'Save game';
+  $('#deleteBtn').hidden = !editing;
 }
 
 function openSheet(w) {
   draft = { w, end: 'clean' };
+  showSheet();
+}
+function openEdit(id) {
+  const g = state.games.find(x => x.id === id);
+  if (!g) return;
+  draft = { ...g };            // a COPY: Cancel must leave the real game untouched
+  showSheet();
+}
+function showSheet() {
+  // Reset returnValue: a dialog keeps its last returnValue, so without this a
+  // sheet closed with Esc could be read as the previous "save".
+  $('#sheet').returnValue = '';
   paintSheet();
   $('#sheet').showModal();
 }
@@ -453,11 +457,28 @@ $('#sheetForm').addEventListener('click', e => {
 });
 
 $('#sheet').addEventListener('close', () => {
-  if ($('#sheet').returnValue !== 'save' || !draft) return;
-  const g = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), t: Date.now(), ...draft };
+  const action = $('#sheet').returnValue, d = draft;
+  draft = null;
+  if (!d || (action !== 'save' && action !== 'delete')) return;
+
+  if (action === 'delete') {
+    const old = state.games.find(g => g.id === d.id);
+    removeGame(d.id);
+    // Undo puts the exact original back (same id and time).
+    toast('Game deleted', () => { state.games.push(old); persist(); render(); });
+    return;
+  }
+  if (d.id) {
+    // Edit: replace the stored game, keeping its original id and time.
+    const i = state.games.findIndex(g => g.id === d.id);
+    const old = state.games[i];
+    state.games[i] = { ...old, w: d.w, end: d.end };
+    if (persist()) { render(); toast('Game updated', () => { state.games[state.games.findIndex(g => g.id === old.id)] = old; persist(); render(); }); }
+    return;
+  }
+  const g = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), t: Date.now(), ...d };
   state.games.push(g);
   if (persist()) { render(); toast(`${nm(g.w)} won — saved`, () => removeGame(g.id)); }
-  draft = null;
 });
 // Tapping the dark backdrop closes the sheet without saving.
 $('#sheet').addEventListener('click', e => { if (e.target === $('#sheet')) $('#sheet').close('cancel'); });
@@ -469,8 +490,8 @@ function removeGame(id) {
   persist(); render();
 }
 $('#history').addEventListener('click', e => {
-  const b = e.target.closest('[data-del]');
-  if (b && confirm('Delete this game?')) removeGame(b.dataset.del);
+  const b = e.target.closest('[data-edit]');
+  if (b) openEdit(b.dataset.edit);
 });
 
 /* ---------- Toast with optional Undo ---------- */
