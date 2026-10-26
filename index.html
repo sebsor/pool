@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rack Ledger</title>
+<meta name="description" content="8-ball win/loss tracker for Sebastian and Victor">
+<meta name="theme-color" content="#0d2219">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rack Ledger">
+<style>
+/* ---------- Design tokens ----------
+   Every colour lives here as a CSS variable. The rest of the CSS only
+   references tokens, so re-theming means editing this block only. */
+:root{
+  --felt:#0d2219;        /* page background: dark table felt */
+  --felt-2:#123026;      /* raised surfaces (cards) */
+  --felt-3:#1a3d31;      /* inputs, chips */
+  --rail:#2a4a3e;        /* borders */
+  --chalk:#eef3ef;       /* main text */
+  --chalk-dim:#9fb5aa;   /* secondary text */
+  --s:#f2c230;           /* Sebastian = 1-ball yellow */
+  --s-ink:#2a2000;
+  --v:#3d7ef2;           /* Victor = 2-ball blue */
+  --v-ink:#fff;
+  --danger:#e5604f;
+  --radius:16px;
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-t:env(safe-area-inset-top,0px);
+}
+*{box-sizing:border-box;margin:0}
+html,body{background:var(--felt);color:var(--chalk)}
+body{
+  font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  min-height:100dvh;
+  padding:calc(12px + var(--safe-t)) 16px calc(88px + var(--safe-b));
+  -webkit-tap-highlight-color:transparent;
+}
+main{max-width:520px;margin:0 auto}
+h1{font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--chalk-dim);font-weight:600}
+h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--chalk-dim);font-weight:600;margin:22px 0 10px}
+.num{font-variant-numeric:tabular-nums}
+.card{background:var(--felt-2);border:1px solid var(--rail);border-radius:var(--radius);padding:14px}
+.muted{color:var(--chalk-dim);font-size:14px}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+.view{display:none}.view.on{display:block}
+
+/* ---------- Scoreboard ---------- */
+.board{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;margin-top:12px}
+.side{text-align:center}
+.side .who{font-weight:700;font-size:15px}
+.side .big{font-size:56px;font-weight:800;line-height:1}
+.side.s .big{color:var(--s)}.side.v .big{color:var(--v)}
+.dash{font-size:32px;color:var(--chalk-dim)}
+.bar{display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:12px;background:var(--felt-3)}
+.bar i{display:block}.bar .bs{background:var(--s)}.bar .bv{background:var(--v)}
+.sub{display:flex;justify-content:space-between;margin-top:8px}
+
+/* ---------- Big winner buttons ---------- */
+.winbtns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
+.winbtn{border-radius:var(--radius);padding:22px 8px;font-weight:800;font-size:18px;line-height:1.2;min-height:96px}
+.winbtn small{display:block;font-weight:600;font-size:13px;opacity:.75}
+.winbtn.s{background:var(--s);color:var(--s-ink)}
+.winbtn.v{background:var(--v);color:var(--v-ink)}
+.winbtn:active{transform:scale(.97)}
+
+/* ---------- Game rows ---------- */
+.game{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--rail)}
+.game:first-child{border-top:0}
+.dot{width:12px;height:12px;border-radius:50%;flex:none}
+.dot.S{background:var(--s)}.dot.V{background:var(--v)}
+.game .main{flex:1;min-width:0}
+.game .meta{font-size:13px;color:var(--chalk-dim)}
+.tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;background:var(--felt-3);margin:3px 4px 0 0}
+.tag.warn{background:rgba(229,96,79,.18);color:#ffb3a8}
+.del{color:var(--chalk-dim);padding:8px;font-size:18px}
+.sess-head{display:flex;justify-content:space-between;align-items:baseline}
+
+/* ---------- Stat tiles ---------- */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tile{background:var(--felt-2);border:1px solid var(--rail);border-radius:12px;padding:12px}
+.tile .k{font-size:12px;color:var(--chalk-dim);text-transform:uppercase;letter-spacing:.06em}
+.tile .val{font-size:24px;font-weight:800;margin-top:2px}
+.tile .val .s{color:var(--s)}.tile .val .v{color:var(--v)}
+.vs{display:grid;grid-template-columns:1fr auto auto;gap:6px 14px;align-items:center}
+.vs .h{font-size:12px;color:var(--chalk-dim);text-transform:uppercase;letter-spacing:.06em}
+.vs .cs{color:var(--s);font-weight:700;text-align:right}.vs .cv{color:var(--v);font-weight:700;text-align:right}
+svg text{fill:var(--chalk-dim);font:11px system-ui,sans-serif}
+
+/* ---------- Bottom sheet (native <dialog>) ---------- */
+dialog{border:0;padding:0;background:transparent;color:inherit;max-width:none;width:100%;margin:auto 0 0;max-height:92dvh}
+dialog::backdrop{background:rgba(0,0,0,.55)}
+.sheet{background:var(--felt-2);border-top:1px solid var(--rail);border-radius:20px 20px 0 0;padding:18px 16px calc(16px + var(--safe-b));max-width:520px;margin:0 auto;overflow:auto;max-height:92dvh}
+.sheet h3{font-size:20px}
+.field{margin-top:16px}
+.field label,.field .lbl{display:block;font-size:13px;color:var(--chalk-dim);margin-bottom:6px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:10px 14px;border-radius:99px;background:var(--felt-3);border:1px solid var(--rail);font-size:15px;min-height:44px}
+.chip[aria-pressed="true"]{background:var(--chalk);color:var(--felt);border-color:var(--chalk);font-weight:700}
+.chip.small{padding:10px 0;text-align:center}
+/* 0–7 balls: an 8-column grid so all eight fit on one row at phone width */
+.chips[data-key="left"]{display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
+.row{display:flex;gap:10px;margin-top:20px}
+.btn{flex:1;padding:14px;border-radius:12px;font-weight:700;background:var(--felt-3);border:1px solid var(--rail);min-height:48px}
+.btn.primary{background:var(--chalk);color:var(--felt);border-color:var(--chalk)}
+.btn.danger{background:transparent;border-color:var(--danger);color:var(--danger)}
+input[type=text]{width:100%;font:inherit;color:var(--chalk);background:var(--felt-3);border:1px solid var(--rail);border-radius:10px;padding:12px}
+
+/* ---------- Bottom nav ---------- */
+nav{position:fixed;left:0;right:0;bottom:0;background:rgba(13,34,25,.94);backdrop-filter:blur(8px);border-top:1px solid var(--rail);display:flex;justify-content:center;padding-bottom:var(--safe-b);z-index:5}
+nav button{flex:1;max-width:130px;padding:12px 0 14px;font-size:13px;color:var(--chalk-dim);font-weight:600}
+nav button[aria-current="page"]{color:var(--chalk)}
+nav button span{display:block;font-size:20px;line-height:1.2}
+
+/* ---------- Toast ---------- */
+.toast{position:fixed;left:50%;bottom:calc(84px + var(--safe-b));transform:translateX(-50%) translateY(20px);opacity:0;pointer-events:none;
+  background:var(--chalk);color:var(--felt);padding:10px 12px 10px 16px;border-radius:12px;display:flex;gap:12px;align-items:center;transition:.2s;z-index:10;font-weight:600;max-width:calc(100% - 32px)}
+.toast.on{opacity:1;transform:translateX(-50%);pointer-events:auto}
+.toast button{font-weight:800;text-decoration:underline;padding:4px}
+.empty{text-align:center;padding:28px 10px;color:var(--chalk-dim)}
+</style>
+</head>
+<body>
+<main>
+  <!-- ===== LOG ===== -->
+  <section id="v-log" class="view on" aria-label="Log a game">
+    <h1>Rack Ledger</h1>
+    <div id="board"></div>
+    <div class="winbtns">
+      <button class="winbtn s" data-win="S"><span class="pn" data-p="S"></span> won<small>tap to log</small></button>
+      <button class="winbtn v" data-win="V"><span class="pn" data-p="V"></span> won<small>tap to log</small></button>
+    </div>
+    <h2>Latest</h2>
+    <div id="recent" class="card"></div>
+  </section>
+
+  <!-- ===== HISTORY ===== -->
+  <section id="v-history" class="view" aria-label="History">
+    <h1>History</h1>
+    <div id="history"></div>
+  </section>
+
+  <!-- ===== STATS ===== -->
+  <section id="v-stats" class="view" aria-label="Stats">
+    <h1>Stats</h1>
+    <div id="stats"></div>
+  </section>
+
+  <!-- ===== SETTINGS ===== -->
+  <section id="v-settings" class="view" aria-label="Settings">
+    <h1>Settings</h1>
+    <h2>Players</h2>
+    <div class="card">
+      <div class="field" style="margin-top:0"><label for="nameS">Yellow player</label><input id="nameS" type="text" maxlength="20"></div>
+      <div class="field"><label for="nameV">Blue player</label><input id="nameV" type="text" maxlength="20"></div>
+    </div>
+    <h2>Backup</h2>
+    <div class="card">
+      <p class="muted">All games live only in this browser on this phone. Export a backup now and then — if the browser data is cleared, the games are gone.</p>
+      <div class="row">
+        <button class="btn" id="exportBtn">Export JSON</button>
+        <button class="btn" id="importBtn">Import JSON</button>
+      </div>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
+    </div>
+    <h2>Danger zone</h2>
+    <div class="card">
+      <button class="btn danger" id="resetBtn" style="width:100%">Delete all games</button>
+    </div>
+    <p class="muted" style="margin-top:18px">Tip: add this page to your home screen (Share → Add to Home Screen). On iPhone, the home-screen app keeps its data much more reliably than a regular Safari tab.</p>
+  </section>
+</main>
+
+<nav aria-label="Sections">
+  <button data-view="log" aria-current="page"><span>🎱</span>Log</button>
+  <button data-view="history"><span>📜</span>History</button>
+  <button data-view="stats"><span>📈</span>Stats</button>
+  <button data-view="settings"><span>⚙️</span>Settings</button>
+</nav>
+
+<!-- ===== GAME DETAILS SHEET ===== -->
+<dialog id="sheet">
+  <form method="dialog" class="sheet" id="sheetForm">
+    <h3 id="sheetTitle"></h3>
+    <p class="muted">Everything below is optional — just hit Save if you're in a hurry.</p>
+
+    <div class="field"><span class="lbl">How did it end?</span><div class="chips" data-key="end"></div></div>
+    <div class="field"><span class="lbl">Who broke?</span><div class="chips" data-key="brk"></div></div>
+    <div class="field" id="bnrField" hidden><span class="lbl">Break and run?</span><div class="chips" data-key="bnr"></div></div>
+    <div class="field"><span class="lbl" id="grpLbl"></span><div class="chips" data-key="grp"></div></div>
+    <div class="field"><span class="lbl" id="leftLbl"></span><div class="chips" data-key="left"></div></div>
+
+    <div class="row">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" value="save" id="saveBtn">Save game</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"><span id="toastMsg"></span><button id="toastUndo" hidden>Undo</button></div>
+
+<script>
+/* =====================================================================
+   DATA MODEL
+   Everything is one object saved as JSON in localStorage:
+     { version, players:{S,V}, games:[Game] }
+   A Game stores *facts only*:
+     id   unique string
+     t    timestamp (ms since 1970) — used for ordering and sessions
+     w    winner: 'S' or 'V'
+     end  'clean' | 'early8' | 'scratch8' | 'forfeit'
+          (early8/scratch8 always describe the LOSER's foul)
+     brk  who broke: 'S' | 'V' | null
+     bnr  break-and-run: true/false
+     grp  the WINNER's group: 'solids' | 'stripes' | null
+     left balls the loser still had on the table: 0–7 | null
+   Stats, streaks and sessions are never stored — they are recalculated
+   from the games list every render. That way an undo or delete can
+   never leave a stale stat behind.
+   ===================================================================== */
+const KEY = 'rackLedger.v1';
+const SESSION_GAP = 4 * 60 * 60 * 1000;   // >4h between games = new session (a new "night")
+const DEFAULT = () => ({ version: 1, players: { S: 'Sebastian', V: 'Victor' }, games: [] });
+
+let state = load();
+
+function load() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(KEY));
+    if (raw && Array.isArray(raw.games) && raw.players) return raw;
+  } catch (e) { /* storage blocked or corrupt JSON — fall back to empty */ }
+  return DEFAULT();
+}
+function persist() {
+  try { localStorage.setItem(KEY, JSON.stringify(state)); return true; }
+  catch (e) { toast('Could not save — browser storage is blocked'); return false; }
+}
+
+// Ask the browser not to evict our data under storage pressure.
+// Chrome/Android honours this; Safari may ignore it. Harmless either way.
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+
+/* ---------- Small helpers ---------- */
+const $ = s => document.querySelector(s);
+const other = p => (p === 'S' ? 'V' : 'S');
+const nm = p => state.players[p];
+// esc(): names are user-typed and get put into innerHTML, so escape them
+// to stop a name like "<img onerror=...>" from running as code.
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+const sorted = () => [...state.games].sort((a, b) => a.t - b.t);
+const fmtDay = t => new Date(t).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+const fmtTime = t => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+function endLabel(g) {
+  const l = esc(nm(other(g.w)));
+  return { clean: 'Potted the 8', early8: `${l} sank the 8 early`, scratch8: `${l} scratched on the 8`, forfeit: 'Forfeit' }[g.end] || '';
+}
+
+/* =====================================================================
+   SESSIONS — derived, not stored.
+   Walk the games oldest→newest; whenever the gap to the previous game
+   is bigger than SESSION_GAP, start a new session.
+   ===================================================================== */
+function getSessions(games = sorted()) {
+  const out = [];
+  let cur = null;
+  for (const g of games) {
+    if (!cur || g.t - cur.last > SESSION_GAP) { cur = { games: [], start: g.t, last: g.t }; out.push(cur); }
+    cur.games.push(g); cur.last = g.t;
+  }
+  for (const s of out) {
+    s.S = s.games.filter(g => g.w === 'S').length;
+    s.V = s.games.length - s.S;
+  }
+  return out;
+}
+
+/* =====================================================================
+   STATS — one pass over the games, oldest→newest.
+   ===================================================================== */
+function computeStats() {
+  const games = sorted();
+  const P = () => ({ S: 0, V: 0 });
+  const st = {
+    n: games.length, wins: P(),
+    early8: P(), scratch8: P(), forfeit: P(),          // keyed by the player who LOST that way
+    brk: { S: { n: 0, won: 0 }, V: { n: 0, won: 0 } },  // games each player broke, and won
+    bnr: P(),
+    grp: { S: { solids: { n: 0, won: 0 }, stripes: { n: 0, won: 0 } }, V: { solids: { n: 0, won: 0 }, stripes: { n: 0, won: 0 } } },
+    left: { S: [], V: [] },                               // balls left when that player lost
+    longest: P(), cur: { p: null, n: 0 },
+    cumul: [],                                            // Sebastian's running win % after each game
+    months: {}                                            // 'YYYY-MM' -> {S,V}
+  };
+  let run = { p: null, n: 0 };
+  games.forEach((g, i) => {
+    const w = g.w, l = other(w);
+    st.wins[w]++;
+    if (g.end === 'early8') st.early8[l]++;
+    if (g.end === 'scratch8') st.scratch8[l]++;
+    if (g.end === 'forfeit') st.forfeit[l]++;
+    if (g.brk) { st.brk[g.brk].n++; if (g.brk === w) st.brk[g.brk].won++; }
+    if (g.bnr) st.bnr[w]++;
+    if (g.grp) {
+      // The winner played g.grp, so the loser played the other group.
+      const lg = g.grp === 'solids' ? 'stripes' : 'solids';
+      st.grp[w][g.grp].n++; st.grp[w][g.grp].won++;
+      st.grp[l][lg].n++;
+    }
+    if (g.left !== null && g.left !== undefined) st.left[l].push(g.left);
+    // Streaks: extend the run if the same player won again, else restart.
+    run = run.p === w ? { p: w, n: run.n + 1 } : { p: w, n: 1 };
+    st.longest[w] = Math.max(st.longest[w], run.n);
+    st.cumul.push((st.wins.S / (i + 1)) * 100);
+    const d = new Date(g.t);
+    const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    (st.months[mk] ||= P())[w]++;
+  });
+  st.cur = run;
+  const sess = getSessions(games);
+  st.sessions = { n: sess.length, S: sess.filter(s => s.S > s.V).length, V: sess.filter(s => s.V > s.S).length };
+  st.sessions.tied = sess.length - st.sessions.S - st.sessions.V;
+  // "Close games": the loser had 0–1 balls left.
+  st.close = games.filter(g => g.left !== null && g.left !== undefined && g.left <= 1).length;
+  return st;
+}
+
+/* =====================================================================
+   RENDERING — each view has one render function that rebuilds its HTML
+   from state. render() calls all of them after any change.
+   ===================================================================== */
+function render() {
+  document.querySelectorAll('.pn').forEach(el => (el.textContent = nm(el.dataset.p)));
+  renderBoard(); renderRecent(); renderHistory(); renderStats();
+}
+
+function gameRow(g, withDelete) {
+  const tags = [];
+  if (g.end && g.end !== 'clean') tags.push(`<span class="tag ${g.end === 'forfeit' ? '' : 'warn'}">${endLabel(g)}</span>`);
+  if (g.bnr) tags.push('<span class="tag">Break &amp; run</span>');
+  else if (g.brk) tags.push(`<span class="tag">${esc(nm(g.brk))} broke</span>`);
+  if (g.grp) tags.push(`<span class="tag">${g.grp === 'solids' ? 'Solids' : 'Stripes'}</span>`);
+  if (g.left !== null && g.left !== undefined) tags.push(`<span class="tag">${g.left} left</span>`);
+  return `<div class="game">
+    <span class="dot ${g.w}" aria-hidden="true"></span>
+    <div class="main"><div><b>${esc(nm(g.w))}</b> won <span class="meta">· ${fmtTime(g.t)}</span></div><div>${tags.join('')}</div></div>
+    ${withDelete ? `<button class="del" data-del="${g.id}" aria-label="Delete game">✕</button>` : ''}
+  </div>`;
+}
+
+function renderBoard() {
+  const st = computeStats();
+  const sess = getSessions();
+  const last = sess[sess.length - 1];
+  // Only show "tonight" if the latest session could still be going on.
+  const live = last && Date.now() - last.last < SESSION_GAP;
+  const streak = st.cur.p ? `${esc(nm(st.cur.p))} on a ${st.cur.n}-game streak` : 'No games yet';
+  $('#board').innerHTML = `<div class="card" style="margin-top:12px">
+    <div class="board">
+      <div class="side s"><div class="who">${esc(nm('S'))}</div><div class="big num">${st.wins.S}</div></div>
+      <div class="dash">–</div>
+      <div class="side v"><div class="who">${esc(nm('V'))}</div><div class="big num">${st.wins.V}</div></div>
+    </div>
+    <div class="bar" aria-hidden="true"><i class="bs" style="width:${st.n ? pct(st.wins.S, st.n) : 50}%"></i><i class="bv" style="flex:1"></i></div>
+    <div class="sub muted"><span>${live ? `Tonight <b class="num" style="color:var(--chalk)">${last.S}–${last.V}</b>` : `${st.n} games all-time`}</span><span>${streak}</span></div>
+  </div>`;
+}
+
+function renderRecent() {
+  const g = sorted().reverse().slice(0, 3);
+  $('#recent').innerHTML = g.length ? g.map(x => gameRow(x, false)).join('') : '<div class="empty">No games yet. Rack \'em.</div>';
+}
+
+function renderHistory() {
+  const sess = getSessions().reverse();
+  if (!sess.length) { $('#history').innerHTML = '<div class="empty">Nothing logged yet.</div>'; return; }
+  $('#history').innerHTML = sess.map(s => {
+    const lead = s.S === s.V ? 'Tied' : `${esc(nm(s.S > s.V ? 'S' : 'V'))} took the night`;
+    return `<h2 class="sess-head"><span>${fmtDay(s.start)}</span><span class="num">${s.S}–${s.V}</span></h2>
+      <div class="card"><div class="muted" style="margin-bottom:4px">${lead}</div>
+      ${[...s.games].reverse().map(g => gameRow(g, true)).join('')}</div>`;
+  }).join('');
+}
+
+function renderStats() {
+  const st = computeStats();
+  if (!st.n) { $('#stats').innerHTML = '<div class="empty">Play a few games and the stats show up here.</div>'; return; }
+  const S = esc(nm('S')), V = esc(nm('V'));
+  const avg = a => (a.length ? (a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : '–');
+  const brkTotal = st.brk.S.n + st.brk.V.n;
+  const brkWon = st.brk.S.won + st.brk.V.won;
+  const gp = (p, g) => (st.grp[p][g].n ? `${pct(st.grp[p][g].won, st.grp[p][g].n)}% <span class="muted">(${st.grp[p][g].n})</span>` : '–');
+  const bp = p => (st.brk[p].n ? `${pct(st.brk[p].won, st.brk[p].n)}% <span class="muted">(${st.brk[p].n})</span>` : '–');
+
+  $('#stats').innerHTML = `
+    <div class="grid2" style="margin-top:12px">
+      <div class="tile"><div class="k">Win rate</div><div class="val num"><span class="s">${pct(st.wins.S, st.n)}%</span> / <span class="v">${pct(st.wins.V, st.n)}%</span></div></div>
+      <div class="tile"><div class="k">Nights won</div><div class="val num"><span class="s">${st.sessions.S}</span> – <span class="v">${st.sessions.V}</span></div><div class="muted">${st.sessions.tied} tied</div></div>
+      <div class="tile"><div class="k">Longest streak</div><div class="val num"><span class="s">${st.longest.S}</span> / <span class="v">${st.longest.V}</span></div></div>
+      <div class="tile"><div class="k">Breaker wins</div><div class="val num">${brkTotal ? pct(brkWon, brkTotal) + '%' : '–'}</div><div class="muted">of ${brkTotal} games with break logged</div></div>
+    </div>
+
+    <h2>${S}'s win % over time</h2>
+    <div class="card">${lineChart(st.cumul)}</div>
+
+    <h2>Wins per month</h2>
+    <div class="card">${monthChart(st.months)}</div>
+
+    <h2>Head to head</h2>
+    <div class="card vs num">
+      <span class="h"></span><span class="h" style="color:var(--s)">${S}</span><span class="h" style="color:var(--v)">${V}</span>
+      <span>Sank the 8 early</span><span class="cs">${st.early8.S}</span><span class="cv">${st.early8.V}</span>
+      <span>Scratched on the 8</span><span class="cs">${st.scratch8.S}</span><span class="cv">${st.scratch8.V}</span>
+      <span>Forfeits</span><span class="cs">${st.forfeit.S}</span><span class="cv">${st.forfeit.V}</span>
+      <span>Break &amp; runs</span><span class="cs">${st.bnr.S}</span><span class="cv">${st.bnr.V}</span>
+      <span>Win % when breaking</span><span class="cs">${bp('S')}</span><span class="cv">${bp('V')}</span>
+      <span>Win % on solids</span><span class="cs">${gp('S', 'solids')}</span><span class="cv">${gp('V', 'solids')}</span>
+      <span>Win % on stripes</span><span class="cs">${gp('S', 'stripes')}</span><span class="cv">${gp('V', 'stripes')}</span>
+      <span>Avg balls left when losing</span><span class="cs">${avg(st.left.S)}</span><span class="cv">${avg(st.left.V)}</span>
+    </div>
+    <p class="muted" style="margin-top:10px">Numbers in brackets are how many games the % is based on. Under ~10 games, treat percentages as noise. ${st.close} game${st.close === 1 ? '' : 's'} so far ended with the loser on 0–1 balls.</p>`;
+}
+
+/* ---------- Charts: hand-built SVG, no library needed ---------- */
+function lineChart(vals) {
+  if (vals.length < 2) return '<div class="empty">Needs at least 2 games.</div>';
+  const W = 340, H = 150, L = 40, R = 8, T = 8, B = 20;
+  const x = i => L + (i / (vals.length - 1)) * (W - L - R);
+  const y = v => T + (1 - v / 100) * (H - T - B);
+  const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const last = vals[vals.length - 1];
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Win percentage over ${vals.length} games, currently ${Math.round(last)}%">
+    ${[0, 50, 100].map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--rail)" ${v === 50 ? 'stroke-dasharray="4 4"' : ''}/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}%</text>`).join('')}
+    <polyline points="${pts}" fill="none" stroke="var(--s)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${x(vals.length - 1)}" cy="${y(last)}" r="4" fill="var(--s)"/>
+    <text x="${L}" y="${H - 4}">Game 1</text><text x="${W - R}" y="${H - 4}" text-anchor="end">Game ${vals.length}</text>
+  </svg><div class="muted">Above the dashed line = ${esc(nm('S'))} leads overall. The line settles as games pile up — early swings are normal.</div>`;
+}
+
+function monthChart(months) {
+  const keys = Object.keys(months).sort().slice(-6);   // last 6 months with games
+  const max = Math.max(1, ...keys.flatMap(k => [months[k].S, months[k].V]));
+  const W = 340, H = 140, B = 20, T = 14;
+  const slot = W / keys.length, bw = Math.min(22, slot / 3);
+  const h = v => (v / max) * (H - B - T);
+  const bars = keys.map((k, i) => {
+    const cx = slot * i + slot / 2, m = months[k];
+    const lbl = new Date(k + '-01T12:00').toLocaleDateString('en-GB', { month: 'short' });
+    const bar = (v, xx, col) => `<rect x="${xx}" y="${H - B - h(v)}" width="${bw}" height="${h(v)}" rx="3" fill="${col}"/><text x="${xx + bw / 2}" y="${H - B - h(v) - 3}" text-anchor="middle">${v}</text>`;
+    return bar(m.S, cx - bw - 2, 'var(--s)') + bar(m.V, cx + 2, 'var(--v)') + `<text x="${cx}" y="${H - 4}" text-anchor="middle">${lbl}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Wins per month">${bars}</svg>`;
+}
+
+/* =====================================================================
+   LOGGING A GAME — the bottom sheet
+   Tapping a winner button opens the sheet pre-filled with defaults, so
+   "tap winner → Save" is the fastest path (2 taps). Every detail is optional.
+   ===================================================================== */
+let draft = null;
+
+function chipGroup(key, options) {
+  // options: [[value, label], ...]; tapping the selected chip again clears it
+  const wrap = document.querySelector(`.chips[data-key="${key}"]`);
+  wrap.innerHTML = options.map(([v, l]) =>
+    `<button type="button" class="chip ${key === 'left' ? 'small' : ''}" data-v="${v}" aria-pressed="${String(draft[key]) === String(v)}">${l}</button>`).join('');
+}
+
+function paintSheet() {
+  const w = draft.w, l = other(w), W = esc(nm(w)), Lname = esc(nm(l));
+  $('#sheetTitle').innerHTML = `<span style="color:var(--${w.toLowerCase()})">${W}</span> won`;
+  chipGroup('end', [['clean', 'Potted the 8'], ['early8', `${Lname} sank the 8 early`], ['scratch8', `${Lname} scratched on the 8`], ['forfeit', 'Forfeit']]);
+  chipGroup('brk', [['S', esc(nm('S'))], ['V', esc(nm('V'))]]);
+  // Break-and-run only makes sense if the winner broke and finished cleanly.
+  const bnrPossible = draft.brk === w && draft.end === 'clean';
+  if (!bnrPossible) draft.bnr = false;
+  $('#bnrField').hidden = !bnrPossible;
+  chipGroup('bnr', [[true, 'Yes, ran the table'], [false, 'No']]);
+  $('#grpLbl').textContent = `${nm(w)}'s group`;
+  chipGroup('grp', [['solids', 'Solids'], ['stripes', 'Stripes']]);
+  $('#leftLbl').textContent = `${nm(l)}'s balls left on the table`;
+  chipGroup('left', [0, 1, 2, 3, 4, 5, 6, 7].map(n => [n, n]));
+}
+
+function openSheet(w) {
+  draft = { w, end: 'clean', brk: null, bnr: false, grp: null, left: null };
+  paintSheet();
+  $('#sheet').showModal();
+}
+
+// One listener on the form handles every chip (event delegation),
+// instead of attaching a listener to each chip every time we repaint.
+$('#sheetForm').addEventListener('click', e => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  const key = chip.parentElement.dataset.key;
+  let v = chip.dataset.v;
+  if (key === 'left') v = Number(v);
+  if (key === 'bnr') v = v === 'true';
+  // Tap a selected chip again to unselect (except "end", which always has a value).
+  draft[key] = (String(draft[key]) === String(v) && key !== 'end' && key !== 'bnr') ? null : v;
+  paintSheet();
+});
+
+$('#sheet').addEventListener('close', () => {
+  if ($('#sheet').returnValue !== 'save' || !draft) return;
+  const g = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), t: Date.now(), ...draft };
+  state.games.push(g);
+  if (persist()) { render(); toast(`${nm(g.w)} won — saved`, () => removeGame(g.id)); }
+  draft = null;
+});
+// Tapping the dark backdrop closes the sheet without saving.
+$('#sheet').addEventListener('click', e => { if (e.target === $('#sheet')) $('#sheet').close('cancel'); });
+
+document.querySelectorAll('[data-win]').forEach(b => b.addEventListener('click', () => openSheet(b.dataset.win)));
+
+function removeGame(id) {
+  state.games = state.games.filter(g => g.id !== id);
+  persist(); render();
+}
+$('#history').addEventListener('click', e => {
+  const b = e.target.closest('[data-del]');
+  if (b && confirm('Delete this game?')) removeGame(b.dataset.del);
+});
+
+/* ---------- Toast with optional Undo ---------- */
+let toastTimer;
+function toast(msg, undo) {
+  $('#toastMsg').textContent = msg;
+  const u = $('#toastUndo');
+  u.hidden = !undo;
+  u.onclick = () => { undo(); $('#toast').classList.remove('on'); };
+  $('#toast').classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $('#toast').classList.remove('on'), undo ? 6000 : 2500);
+}
+
+/* ---------- Navigation ---------- */
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('nav button').forEach(x => x.removeAttribute('aria-current'));
+  b.setAttribute('aria-current', 'page');
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + b.dataset.view));
+  if (b.dataset.view === 'settings') { $('#nameS').value = nm('S'); $('#nameV').value = nm('V'); }
+  window.scrollTo(0, 0);
+}));
+
+/* ---------- Settings ---------- */
+['S', 'V'].forEach(p => $('#name' + p).addEventListener('change', e => {
+  state.players[p] = e.target.value.trim() || DEFAULT().players[p];
+  persist(); render();
+}));
+
+$('#exportBtn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `rack-ledger-${new Date().toISOString().slice(0, 10)}.json` });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$('#importBtn').addEventListener('click', () => $('#importFile').click());
+$('#importFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    // Validate before replacing anything — a bad file must never wipe real data.
+    const ok = data && data.players && Array.isArray(data.games) &&
+      data.games.every(g => (g.w === 'S' || g.w === 'V') && typeof g.t === 'number' && g.id);
+    if (!ok) throw new Error('bad shape');
+    if (!confirm(`Replace current ${state.games.length} games with ${data.games.length} from the file?`)) return;
+    state = data; persist(); render(); toast('Backup imported');
+  } catch (err) { alert("That file doesn't look like a Rack Ledger backup."); }
+});
+$('#resetBtn').addEventListener('click', () => {
+  if (!state.games.length) return;
+  if (confirm(`Delete all ${state.games.length} games? Export a backup first if unsure.`) && confirm('Really? This cannot be undone.')) {
+    state.games = []; persist(); render();
+  }
+});
+
+// Re-render when the app comes back to the foreground, so "Tonight"
+// disappears correctly after the 4-hour gap even if the page stayed open.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+
+render();
+
+/* ---------- Service worker (offline support) ---------- */
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
